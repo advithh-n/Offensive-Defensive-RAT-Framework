@@ -1,0 +1,107 @@
+<!--
+    PHISHING EMAIL TEMPLATE - EDUCATIONAL PURPOSE ONLY
+    RMIT Cybersecurity Assignment
+
+    MITRE ATT&CK: T1566.001 (Phishing: Spearphishing Attachment)
+
+    This demonstrates how attackers craft convincing phishing emails.
+    DO NOT send this to real targets.
+-->
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body { font-family: Arial, sans-serif; background: #f5f5f5; padding: 20px; }
+        .email-container { max-width: 600px; margin: 0 auto; background: white; border: 1px solid #ddd; border-radius: 4px; }
+        .email-header { background: #003366; color: white; padding: 15px 20px; }
+        .email-header img { height: 30px; }
+        .email-body { padding: 25px; color: #333; line-height: 1.6; }
+        .email-body h2 { color: #003366; }
+        .button { display: inline-block; background: #0066cc; color: white; padding: 12px 30px;
+                   text-decoration: none; border-radius: 4px; margin: 15px 0; }
+        .footer { background: #f9f9f9; padding: 15px 20px; font-size: 11px; color: #999; border-top: 1px solid #eee; }
+        .urgent { background: #fff3cd; border: 1px solid #ffc107; padding: 10px; border-radius: 4px; margin: 10px 0; }
+    </style>
+</head>
+<body>
+
+<!-- RED FLAGS ANNOTATED FOR PRESENTATION -->
+<div style="background: #ff0040; color: white; padding: 10px; text-align: center; font-weight: bold;">
+    EDUCATIONAL DEMO - Red flags annotated below
+</div>
+
+<div class="email-container">
+    <div class="email-header">
+        <!-- RED FLAG 1: Slightly misspelled domain -->
+        <strong>RMIT University</strong> | IT Security Department
+        <br><small>From: security-team@rmit-university.com.au</small>
+        <!-- REAL domain would be @rmit.edu.au -->
+    </div>
+
+    <div class="email-body">
+        <h2>Urgent: Your Account Security Review Required</h2>
+
+        <!-- RED FLAG 2: Creates urgency/fear -->
+        <div class="urgent">
+            ⚠️ Your RMIT account has been flagged for unusual login activity.
+            Immediate action required within 24 hours to prevent account suspension.
+        </div>
+
+        <p>Dear Student,</p>
+
+        <!-- RED FLAG 3: Vague but alarming language -->
+        <p>Our security systems have detected multiple failed login attempts on your
+        RMIT student account from an unrecognized device in <strong>Ho Chi Minh City, Vietnam</strong>.</p>
+
+        <p>To secure your account, please verify your identity by downloading and running
+        the security verification tool below:</p>
+
+        <!-- RED FLAG 4: Downloading an executable -->
+        <a href="#" class="button">📎 Download Security_Verification_Tool.exe</a>
+
+        <!-- RED FLAG 5: The "tool" would actually be our RAT -->
+        <p><small>File: RMIT_Security_Check_v3.2.exe (2.4 MB)<br>
+        SHA256: 7a3b8f... (looks legitimate but isn't)</small></p>
+
+        <p>If you did not initiate these login attempts, please run this tool immediately
+        to change your credentials and enable two-factor authentication.</p>
+
+        <!-- RED FLAG 6: Fake authority signature -->
+        <p>Regards,<br>
+        <strong>David Chen</strong><br>
+        Senior Security Analyst<br>
+        RMIT IT Security Operations<br>
+        📞 +61 3 9925 0000</p>
+    </div>
+
+    <div class="footer">
+        This is an automated security notification from RMIT University.
+        © 2026 RMIT University, Melbourne, Australia. All rights reserved.
+        <br>Sent to: student@student.rmit.edu.au | Unsubscribe
+    </div>
+</div>
+
+<!-- ANALYSIS FOR PRESENTATION -->
+<div style="margin-top: 30px; background: #1a1a1a; color: #00ff41; padding: 20px; font-family: 'Courier New'; border-radius: 8px;">
+    <h3 style="color: #ff0040;">RED FLAG ANALYSIS</h3>
+    <p>1. SENDER DOMAIN: rmit-university.com.au (real is rmit.edu.au)</p>
+    <p>2. URGENCY: "24 hours to prevent suspension" — pressure tactic</p>
+    <p>3. FEAR: "Ho Chi Minh City" login — triggers emotional response</p>
+    <p>4. EXECUTABLE: Asking to download .exe — legitimate orgs never do this</p>
+    <p>5. PAYLOAD: The .exe would be our RAT disguised as security tool</p>
+    <p>6. AUTHORITY: Fake name, real-looking phone number, official tone</p>
+
+    <h3 style="color: #00ff41; margin-top: 15px;">SOCIAL ENGINEERING PRINCIPLES USED</h3>
+    <p>• Cialdini's Authority — impersonating IT security team</p>
+    <p>• Scarcity/Urgency — 24-hour deadline</p>
+    <p>• Fear — account suspension threat</p>
+    <p>• Trust — RMIT branding, professional formatting</p>
+
+    <h3 style="color: #00ff41; margin-top: 15px;">MITRE ATT&CK</h3>
+    <p>• T1566.001 — Phishing: Spearphishing Attachment</p>
+    <p>• T1204.002 — User Execution: Malicious File</p>
+    <p>• T1036.005 — Masquerading: Match Legitimate Name</p>
+</div>
+
+</body>
+</html>
